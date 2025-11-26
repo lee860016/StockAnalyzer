@@ -3,45 +3,62 @@ import baostock as bs
 import akshare as ak
 import pandas as pd 
 import mplfinance as mpf
-import xlrd, time, sys
+import xlrd, time, sys, logging
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('stock_analyzer.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # 股票市场定义
 markets = {
     '1': {
         'name': '上证主板', 
-        'abbr': 'sh',
+        'exchage': 'sh',
         'code_prefix': '60',
         'description': '上海证券交易所主板市场'
     },
     '2': {
         'name': '上证科创板',
-        'abbr': 'sh',
+        'exchage': 'sh',
         'code_prefix': '68',
         'description': '上海证券交易所科创板'
     },
     '3': {
         'name': '深证主板',
-        'abbr': 'sz',
+        'exchage': 'sz',
         'code_prefix': '00', 
         'description': '深圳证券交易所主板市场'
     },
     '4': {
         'name': '深证创业板',
-        'abbr': 'sz',
+        'exchage': 'sz',
         'code_prefix': '30',
         'description': '深圳证券交易所创业板'
     },
     '5': {
         'name': '北证',
-        'abbr': 'bj',
+        'exchage': 'bj',
         'code_prefix': '920',
         'description': '北京证券交易所'
     }
 }
 
-# 北交所
+df_SSE_Main = pd.DataFrame()
+df_SSE_STAR = pd.DataFrame()
+df_SZSE_Main = pd.DataFrame()
+df_SZSE_ChiNext = pd.DataFrame()
+df_BSE = pd.DataFrame()
+
+# 北交所股票列表
 tsstocklist = list()
 bse_recommend_stocks = dict()
 
@@ -53,33 +70,38 @@ recommend_stocks = dict()
 token = '8b001669116f59aed7f94ef845ec0a9be810ac310df5b7e2f4147b93'
 ts.set_token(token)
 
-# 从AKShare接口获取上交所、深交所和北交所股票列表，并存储到PostgreSQL数据库中
+# 从AKShare接口获取上交所、深交所和北交所股票列表
 def GetStockListByAKShare():
 
+    #
+    global df_SSE_Main, df_SSE_STAR, df_SZSE_Main, df_SZSE_ChiNext, df_BSE
+
     # 获取上交所股票-主板
-    stock_info_sh_df = ak.stock_info_sh_name_code(symbol="主板A股")
+    df_SSE_Main = ak.stock_info_sh_name_code(symbol="主板A股")
     # 重命名列以便统一处理
-    stock_info_sh_df = stock_info_sh_df.rename(columns={
+    df_SSE_Main = df_SSE_Main.rename(columns={
         '证券代码': 'stock_code',
         '证券简称': 'stock_name',
         '上市日期': 'listing_date'
     })
-    stock_info_sh_df['market_type'] = '主板A股'
-    print(f"获取到 {len(stock_info_sh_df)} 只上交所主板A股股票")
+    df_SSE_Main['market_type'] = '主板A股'
+    df_SSE_Main['stock_code_full'] = df_SSE_Main['stock_code'] + '.SH'
+    print(f"获取到 {len(df_SSE_Main)} 只上交所主板A股股票")
     #print(gem_stocks.head())
-    #print(stock_info_sh_df)
+    #print(df_SSE_Main)
 
     # 获取上交所股票-科创板
-    stock_info_sh_df = ak.stock_info_sh_name_code(symbol="科创板")
+    df_SSE_STAR = ak.stock_info_sh_name_code(symbol="科创板")
     # 重命名列以便统一处理
-    stock_info_sh_df = stock_info_sh_df.rename(columns={
+    df_SSE_STAR = df_SSE_STAR.rename(columns={
         '证券代码': 'stock_code',
         '证券简称': 'stock_name',
         '上市日期': 'listing_date'
     })
-    stock_info_sh_df['market_type'] = '科创板'
-    print(f"获取到 {len(stock_info_sh_df)} 只科创板股票")
-    #print(stock_info_sh_df)
+    df_SSE_STAR['market_type'] = '科创板'
+    df_SSE_STAR['stock_code_full'] = df_SSE_STAR['stock_code'] + '.SH'
+    print(f"获取到 {len(df_SSE_STAR)} 只科创板股票")
+    #print(df_SSE_STAR)
 
     # 获取深交所股票
     stock_info_sz_df = ak.stock_info_sz_name_code(symbol="A股列表")
@@ -90,21 +112,53 @@ def GetStockListByAKShare():
         'A股上市日期': 'listing_date',
         '板块': 'market_type'
     })
-    print(f"获取到 {len(stock_info_sz_df)} 只深交所A股股票")
-    #print(stock_info_sz_df)
+    stock_info_sz_df['stock_code_full'] = stock_info_sz_df['stock_code'] + '.SZ'
+    # 分别提取主板和创业板
+    condition = stock_info_sz_df['stock_code'].str.startswith('00')
+    df_SZSE_Main = stock_info_sz_df[condition].copy()
+    condition = stock_info_sz_df['stock_code'].str.startswith('30')
+    df_SZSE_ChiNext = stock_info_sz_df[condition].copy()
+    # 
+    print(f"获取到 {len(stock_info_sz_df)} 只深交所A股股票，其中主板{len(df_SZSE_Main)}只，创业板{len(df_SZSE_ChiNext)}只")
+    #print(df_SZSE_Main)
+    #print(df_SZSE_ChiNext)
 
     # 获取北交所股票
-    stock_info_bj_df = ak.stock_info_bj_name_code()
+    df_BSE = ak.stock_info_bj_name_code()
     # 重命名列以便统一处理
-    stock_info_bj_df = stock_info_bj_df.rename(columns={
+    df_BSE = df_BSE.rename(columns={
         '证券代码': 'stock_code',
         '证券简称': 'stock_name',
         '上市日期': 'listing_date'
     })
-    stock_info_bj_df['market_type'] = ''
-    print(f"获取到 {len(stock_info_bj_df)} 只北交所股票")
-    #print(stock_info_bj_df)
+    df_BSE['market_type'] = ''
+    df_BSE['stock_code_full'] = df_BSE['stock_code'] + '.BJ'
+    print(f"获取到 {len(df_BSE)} 只北交所股票")
+    #rint(df_BSE)
 
+# 从AKShare接口获取上交所、深交所和北交所股票日交易数据
+def GetStockDataByAKShare():
+
+    #
+    global df_SSE_Main, df_SSE_STAR, df_SZSE_Main, df_SZSE_ChiNext, df_BSE
+
+    start_date = '20251117'
+    end_date = '20251121'
+
+    dfs = [df_SSE_Main, df_SSE_STAR, df_SZSE_Main, df_SZSE_ChiNext, df_BSE]
+    for df in dfs:
+        for row in df.itertuples():
+            df = ak.stock_zh_a_hist(
+                symbol=row.stock_code,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq"  # 前复权
+            )
+            print(df)
+            break
+        
+    
 # 从文件中获取北交所股票列表
 def BSEGetStockListFromFile():
 
@@ -252,7 +306,7 @@ def HSESAnalyzeStocksByBaostock(market):
             data_list.append(rs.get_row_data())        
         df = pd.DataFrame(data_list, columns=rs.fields)
 
-        stock_mark = f"{market['abbr']}.{market['code_prefix']}"
+        stock_mark = f"{market['exchage']}.{market['code_prefix']}"
         print(stock_mark)
 
         for rows in df.itertuples(index=False):
@@ -414,15 +468,15 @@ def stock_market_selector2():
         print("🎯 选择确认")
         print("=" * 40)
         print(f"市场名称: {market['name']}")
-        print(f"市场简称: {market['abbr']}")
+        print(f"市场简称: {market['exchage']}")
         print(f"代码前缀: {market['code_prefix']}")
         print(f"市场描述: {market['description']}")
         '''
 
-        if market['abbr'].upper() in ['SH', 'SZ'] :
+        if market['exchage'].upper() in ['SH', 'SZ'] :
             HSESAnalyzeStocksByBaostock(market)
 
-        if market['abbr'].upper() == 'BJ':
+        if market['exchage'].upper() == 'BJ':
             BSESAnalyzeStocks(market) 
         
         # 询问是否继续
@@ -463,6 +517,8 @@ def stock_market_selector2():
 def main():
 
     GetStockListByAKShare()
+
+    GetStockDataByAKShare()
     
     #stock_market_selector2()
 
