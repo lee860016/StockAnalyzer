@@ -1,5 +1,6 @@
 import tushare as ts
 import baostock as bs
+import akshare as ak
 import pandas as pd 
 import mplfinance as mpf
 import xlrd, time, sys
@@ -51,6 +52,58 @@ recommend_stocks = dict()
 # TUSHARE接口令牌设置
 token = '8b001669116f59aed7f94ef845ec0a9be810ac310df5b7e2f4147b93'
 ts.set_token(token)
+
+# 从AKShare接口获取上交所、深交所和北交所股票列表，并存储到PostgreSQL数据库中
+def GetStockListByAKShare():
+
+    # 获取上交所股票-主板
+    stock_info_sh_df = ak.stock_info_sh_name_code(symbol="主板A股")
+    # 重命名列以便统一处理
+    stock_info_sh_df = stock_info_sh_df.rename(columns={
+        '证券代码': 'stock_code',
+        '证券简称': 'stock_name',
+        '上市日期': 'listing_date'
+    })
+    stock_info_sh_df['market_type'] = '主板A股'
+    print(f"获取到 {len(stock_info_sh_df)} 只上交所主板A股股票")
+    #print(gem_stocks.head())
+    #print(stock_info_sh_df)
+
+    # 获取上交所股票-科创板
+    stock_info_sh_df = ak.stock_info_sh_name_code(symbol="科创板")
+    # 重命名列以便统一处理
+    stock_info_sh_df = stock_info_sh_df.rename(columns={
+        '证券代码': 'stock_code',
+        '证券简称': 'stock_name',
+        '上市日期': 'listing_date'
+    })
+    stock_info_sh_df['market_type'] = '科创板'
+    print(f"获取到 {len(stock_info_sh_df)} 只科创板股票")
+    #print(stock_info_sh_df)
+
+    # 获取深交所股票
+    stock_info_sz_df = ak.stock_info_sz_name_code(symbol="A股列表")
+    # 重命名列以便统一处理
+    stock_info_sz_df = stock_info_sz_df.rename(columns={
+        'A股代码': 'stock_code',
+        'A股简称': 'stock_name',
+        'A股上市日期': 'listing_date',
+        '板块': 'market_type'
+    })
+    print(f"获取到 {len(stock_info_sz_df)} 只深交所A股股票")
+    #print(stock_info_sz_df)
+
+    # 获取北交所股票
+    stock_info_bj_df = ak.stock_info_bj_name_code()
+    # 重命名列以便统一处理
+    stock_info_bj_df = stock_info_bj_df.rename(columns={
+        '证券代码': 'stock_code',
+        '证券简称': 'stock_name',
+        '上市日期': 'listing_date'
+    })
+    stock_info_bj_df['market_type'] = ''
+    print(f"获取到 {len(stock_info_bj_df)} 只北交所股票")
+    #print(stock_info_bj_df)
 
 # 从文件中获取北交所股票列表
 def BSEGetStockListFromFile():
@@ -408,8 +461,10 @@ def stock_market_selector2():
                 break
 
 def main():
+
+    GetStockListByAKShare()
     
-    stock_market_selector2()
+    #stock_market_selector2()
 
 if __name__ == "__main__":
     main()
