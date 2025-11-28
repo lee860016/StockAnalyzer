@@ -3,9 +3,11 @@ import baostock as bs
 import akshare as ak
 import pandas as pd 
 import mplfinance as mpf
-import xlrd, time, sys, logging
+import xlrd, time, sys, logging, os
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
+from stock_manager import StockManager
+from stock_data_manager import StockDataManager
 
 # 配置日志
 logging.basicConfig(
@@ -17,6 +19,15 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+class Config():
+    def __init__(self):
+        self.host = 'localhost'
+        self.port = 3306
+        self.user = 'root'
+        self.password = 'tjj31415'
+        self.database = 'stock_data'
 
 # 股票市场定义
 markets = {
@@ -52,6 +63,7 @@ markets = {
     }
 }
 
+
 df_SSE_Main = pd.DataFrame()
 df_SSE_STAR = pd.DataFrame()
 df_SZSE_Main = pd.DataFrame()
@@ -69,95 +81,6 @@ recommend_stocks = dict()
 # TUSHARE接口令牌设置
 token = '8b001669116f59aed7f94ef845ec0a9be810ac310df5b7e2f4147b93'
 ts.set_token(token)
-
-# 从AKShare接口获取上交所、深交所和北交所股票列表
-def GetStockListByAKShare():
-
-    #
-    global df_SSE_Main, df_SSE_STAR, df_SZSE_Main, df_SZSE_ChiNext, df_BSE
-
-    # 获取上交所股票-主板
-    df_SSE_Main = ak.stock_info_sh_name_code(symbol="主板A股")
-    # 重命名列以便统一处理
-    df_SSE_Main = df_SSE_Main.rename(columns={
-        '证券代码': 'stock_code',
-        '证券简称': 'stock_name',
-        '上市日期': 'listing_date'
-    })
-    df_SSE_Main['market_type'] = '主板A股'
-    df_SSE_Main['stock_code_full'] = df_SSE_Main['stock_code'] + '.SH'
-    print(f"获取到 {len(df_SSE_Main)} 只上交所主板A股股票")
-    #print(gem_stocks.head())
-    #print(df_SSE_Main)
-
-    # 获取上交所股票-科创板
-    df_SSE_STAR = ak.stock_info_sh_name_code(symbol="科创板")
-    # 重命名列以便统一处理
-    df_SSE_STAR = df_SSE_STAR.rename(columns={
-        '证券代码': 'stock_code',
-        '证券简称': 'stock_name',
-        '上市日期': 'listing_date'
-    })
-    df_SSE_STAR['market_type'] = '科创板'
-    df_SSE_STAR['stock_code_full'] = df_SSE_STAR['stock_code'] + '.SH'
-    print(f"获取到 {len(df_SSE_STAR)} 只科创板股票")
-    #print(df_SSE_STAR)
-
-    # 获取深交所股票
-    stock_info_sz_df = ak.stock_info_sz_name_code(symbol="A股列表")
-    # 重命名列以便统一处理
-    stock_info_sz_df = stock_info_sz_df.rename(columns={
-        'A股代码': 'stock_code',
-        'A股简称': 'stock_name',
-        'A股上市日期': 'listing_date',
-        '板块': 'market_type'
-    })
-    stock_info_sz_df['stock_code_full'] = stock_info_sz_df['stock_code'] + '.SZ'
-    # 分别提取主板和创业板
-    condition = stock_info_sz_df['stock_code'].str.startswith('00')
-    df_SZSE_Main = stock_info_sz_df[condition].copy()
-    condition = stock_info_sz_df['stock_code'].str.startswith('30')
-    df_SZSE_ChiNext = stock_info_sz_df[condition].copy()
-    # 
-    print(f"获取到 {len(stock_info_sz_df)} 只深交所A股股票，其中主板{len(df_SZSE_Main)}只，创业板{len(df_SZSE_ChiNext)}只")
-    #print(df_SZSE_Main)
-    #print(df_SZSE_ChiNext)
-
-    # 获取北交所股票
-    df_BSE = ak.stock_info_bj_name_code()
-    # 重命名列以便统一处理
-    df_BSE = df_BSE.rename(columns={
-        '证券代码': 'stock_code',
-        '证券简称': 'stock_name',
-        '上市日期': 'listing_date'
-    })
-    df_BSE['market_type'] = ''
-    df_BSE['stock_code_full'] = df_BSE['stock_code'] + '.BJ'
-    print(f"获取到 {len(df_BSE)} 只北交所股票")
-    #rint(df_BSE)
-
-# 从AKShare接口获取上交所、深交所和北交所股票日交易数据
-def GetStockDataByAKShare():
-
-    #
-    global df_SSE_Main, df_SSE_STAR, df_SZSE_Main, df_SZSE_ChiNext, df_BSE
-
-    start_date = '20251117'
-    end_date = '20251121'
-
-    dfs = [df_SSE_Main, df_SSE_STAR, df_SZSE_Main, df_SZSE_ChiNext, df_BSE]
-    for df in dfs:
-        for row in df.itertuples():
-            df = ak.stock_zh_a_hist(
-                symbol=row.stock_code,
-                period="daily",
-                start_date=start_date,
-                end_date=end_date,
-                adjust="qfq"  # 前复权
-            )
-            print(df)
-            break
-        
     
 # 从文件中获取北交所股票列表
 def BSEGetStockListFromFile():
@@ -373,65 +296,9 @@ def HSESAnalyzeStocksByBaostock(market):
         # 
         bs.logout()
 
-# CMD界面1
-def stock_market_selector():
-    """股票市场选择程序"""
-    
-    # 显示菜单
-    print("=" * 20 + "股票市场分析系统  v1.0" + "=" * 20)
-    print("请选择想要分析的股票市场：")
-    print("1 - 上证主板")
-    print("2 - 上证科创板")
-    print("3 - 深证主板")
-    print("4 - 深圳创业板")
-    print("5 - 北证")
-    print("q - 退出程序")
-    print("=" * 50)
-    
-    # 获取用户输入
-    while True:
-        try:
-            #choice = input("请输入选择 (1-5): ").strip()
-            choice = input("\n请输入您的选择 (1-5 或 q退出): ").strip().lower()
+# CMD界面
+def cmdui():
 
-            if choice == 'q':
-                print("! 感谢使用，再见")
-                break
-            
-            # 验证输入
-            if choice not in ['1', '2', '3', '4', '5']:
-                print("× 输入无效，请重新输入")
-                continue
-            
-            # 根据选择显示对应的市场信息
-            markets = {
-                '1': '上证主板',
-                '2': '上证科创板', 
-                '3': '深证主板',
-                '4': '深圳创业板',
-                '5': '北证'
-            }
-            
-            selected_market = markets[choice]
-            
-            # 显示选择结果
-            print("\n" + "=" * 50)
-            print(f"√ 您选择了: {selected_market}")
-            print("Hello World!")
-            print("=" * 50)
-            
-            break
-            
-        except KeyboardInterrupt:
-            print("\n\n👋 程序已退出")
-            break
-        except Exception as e:
-            print(f"❌ 发生错误: {e}")
-            continue
-
-# CMD界面2
-def stock_market_selector2():
-  
     def display_menu():
         """显示菜单"""
         print("\n" + "=" * 60)
@@ -516,11 +383,18 @@ def stock_market_selector2():
 
 def main():
 
-    GetStockListByAKShare()
+    #
+    cmdui()
+    return
 
-    GetStockDataByAKShare()
-    
-    #stock_market_selector2()
+    db_config = Config()
+    db_manager = StockManager(db_config)
+    db_manager.init()
+    db_data_manager = StockDataManager(db_manager)    
+    # 获取股票列表
+    db_data_manager.update_stock_basic_info()    
+    # 获取股票数据（慎重执行，当前数据更新到2025年11月28日）   
+    #db_data_manager.get_stock_daily_data()
 
 if __name__ == "__main__":
     main()
